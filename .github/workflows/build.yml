@@ -12,10 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Unzip newest zip
         run: |
-          ZIP=$(ls -t *.zip | head -1)
+          ZIP=$(for f in *.zip; do echo "$(git log -1 --format=%ct -- "$f") $f"; done | sort -n | tail -1 | cut -d' ' -f2-)
           echo "Using $ZIP"
           rm -rf _tmp _proj && mkdir _tmp
           unzip -q "$ZIP" -d _tmp
