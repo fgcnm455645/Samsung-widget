@@ -1,0 +1,72 @@
+name: Build APK from ZIP
+on:
+  push:
+    paths: ['*.zip']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unzip newest zip
+        run: |
+          ZIP=$(ls -t *.zip | head -1)
+          echo "Using $ZIP"
+          rm -rf _tmp _proj && mkdir _tmp
+          unzip -q "$ZIP" -d _tmp
+          # if the zip has one top folder, use it
+          if [ $(ls _tmp | wc -l) -eq 1 ] && [ -d "_tmp/$(ls _tmp)" ]; then
+            mv "_tmp/$(ls _tmp)" _proj
+          else
+            mv _tmp _proj
+          fi
+
+      - name: Fixed signing key (so new builds install over old)
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair -keystore debug.keystore -storepass android \
+              -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
+              -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add debug.keystore
+            git commit -m "Add signing key"
+            git push
+          fi
+          cp debug.keystore ~/.android/debug.keystore
+
+      - name: Bump versionCode
+        run: |
+          sed -i -E "s/versionCode = [0-9]+/versionCode = ${{ github.run_number }}/" _proj/app/build.gradle.kts
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Build
+        working-directory: _proj
+        run: gradle assembleDebug --no-daemon
+
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp _proj/app/build/outputs/apk/debug/app-debug.apk GlassWidgets-${{ github.run_number }}.apk
+          gh release create build-${{ github.run_number }} GlassWidgets-${{ github.run_number }}.apk \
+            --title "Build ${{ github.run_number }}" --notes "Auto build"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlassWidgets-apk
+          path: GlassWidgets-*.apk
